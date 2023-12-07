@@ -1,0 +1,374 @@
+---
+title: "Google Algorithm Anomalies"
+author: "R Moseley"
+date: "2022-07-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Description:
+The goal of the markdown is to show data wrangling, visualization, interpretive skills & storytelling abilities.
+
+In early 2018, a website was impacted by a Google algorithm update that disrupted search rankings and ultimately caused significantly fewer non-paid search engine traffic to the website. I was asked to complete a deep dive & impact analysis. I have also completed a deck to present the findings to a theoretical executive board.
+
+**Focus of this task includes:**
+
+* Describe the timeline of the Google algorithm update
+
+* Quantify the traffic impact of the Google algorithm update
+
+* Highlight performance & activity of noteworthy segments
+
+* Prepare a breakdown of any methodologies in the appendix
+
+**Data**
+
+* 4.3M records, daily & segmented aggregated session volume data
+
+**Data Dictionary**
+
+* session_date (calendar date)
+
+* search_engine (applicable search engine used prior to entry)
+
+* mkt_channel (traffic channel)
+
+* is_paid_traffic (true/false if resulting from paid traggic campaigns)
+
+* platform_type (device category)
+
+* entry_page (entry point page name)
+
+* page_rollup (entry point page group)
+
+* session_count (aggregate entry sessions metric)
+
+
+## Load Packages
+
+```{r loads, message=FALSE, warning=FALSE, include=TRUE, paged.print=FALSE}
+
+
+library(dplyr)
+library(anomalize)
+library(tidyverse)
+library(zoo)
+library(TTR)
+```
+
+These are the packages required for doing the preliminary investigation.
+
+
+
+```{r setwd, include=FALSE}
+setwd("~/Documents/GitHub/projects/storytelling/site-traffic-anomalies")
+
+```
+
+## Load the Data
+
+```{r traffic_data}
+
+traffic_data <- read.csv("~/Documents/GitHub/projects/storytelling/site-traffic-anomalies/traffic_data.csv")
+```
+
+Here I am loading the data to my environment.
+
+## Explore the Data
+
+Initially, I will back up the data in case it needs to be loaded again due to any changes.
+
+```{r traffic_data_backup}
+traffic_data$date <- as.Date(traffic_data$session_date,format="%Y-%m-%d")
+traffic_data_backup<-traffic_data
+traffic_data<-traffic_data_backup
+```
+
+
+Next, it would be beneficial to check the head and see the type of data we are dealing with.
+
+```{r head_exploration}
+head(traffic_data,5)
+```
+Looks good so far.
+
+
+## Prepare data for Anomaly Detection
+
+```{r prepare_to_show_anomalies }
+df_unpaid_daily_goog<-traffic_data_backup %>%
+  filter(is_paid_traffic ==FALSE)%>%
+  filter(search_engine =='google')%>%
+  group_by(date) %>%
+  mutate(session_count_sum=sum(sesssion_count))
+
+df_unpaid_daily_goog<-df_unpaid_daily_goog[order(as.Date(df_unpaid_daily_goog$date, format="%Y-%m-%d")),]
+
+df_unpaid_daily_goog_short <-df_unpaid_daily_goog%>%
+  select(date,session_count_sum)%>%
+  distinct()
+
+df <- as_tibble(df_unpaid_daily_goog_short)
+
+```
+
+We are preparing the data to find the anomaly using time decomposition package
+
+```{r find_anomalies }
+df_anomalized <- df %>%
+  time_decompose(session_count_sum, merge = TRUE) %>%
+  anomalize(remainder) %>%
+  time_recompose()
+
+```
+In the time decomposition, we can see this obvious detail that the frequency would be 7 days, as in there would be a weekly pattern in the data.
+
+
+...
+
+```{r df_anomalized_glimpse }
+df_anomalized %>% glimpse()
+
+```
+Here we can see some detail on these results, now we can prepare the visualization.
+
+## Visualize the Outliers
+
+```{r visualize_outliers }
+#determining data outliers in the complete time series
+unpaid_goog_anomaly<-df_anomalized %>% plot_anomalies(ncol = 3, alpha_dots = 0.75)
+
+unpaid_goog_anomaly
+
+```
+
+
+We can see that there are two possible times were there were Google algorithm changes, one of the times is at the end of December, and one looks like February-March. However, these December dates are not in the determined anomaly date, so they need to be removed.
+
+
+
+```{r save_outlier_image }
+
+#save results
+ggsave("unpaid_goog_anomaly.png")
+
+```
+
+I am saving this for later, what a interesting image.
+
+
+## Finding Pre-2018 Outliers
+
+```{r pre_2018_outliers_creation }
+# Find the outliers pre-2018 ---------
+unpaid_daily_goog_pre_18<-traffic_data  %>%
+  filter(is_paid_traffic ==FALSE) %>%
+  filter(search_engine =='google') %>%
+  #filter(date >'2018-01-01')%>%
+  filter(date <'2018-01-01')%>%
+  group_by(date) %>%
+  mutate(session_count_sum=sum(sesssion_count))
+
+#select specfic columns for display
+unpaid_daily_goog_pre_18_short<-unpaid_daily_goog_pre_18 %>%
+  select(date,session_count_sum) %>%
+  distinct()
+
+#clear up date/month
+unpaid_daily_goog_pre_18_short$year_month<-as.yearmon(ymd(unpaid_daily_goog_pre_18_short$date), "%Y %m")
+
+
+```
+
+Here, I filter the data for those before 2018, to remove the outliers present. But first, I am examining the data from this time.
+
+
+```{r pre_2018_outliers_boxplot }
+# Find the outliers pre-2018 ---------
+#create a boxplot to explore doistribution of session counts by months
+unpaid_daily_goog_pre_18_boxplot<-unpaid_daily_goog_pre_18_short %>%
+  ggplot(aes(x = year_month, y = session_count_sum)) +
+  geom_boxplot(aes(group=year_month)) +
+  ggtitle("Boxplot - Unpaid, Pre-Algorithm") +
+  xlab("Session Dates") + ylab("Sum of Daily Session Counts")
+
+unpaid_daily_goog_pre_18_boxplot
+
+
+```
+
+
+This shows that the session counts have slowed down towards the end of the year. Also, you can see that these outlier points in December skew the ranges, and need to be removed.
+
+
+
+
+```{r save_unpaid_daily_goog_pre_18_boxplot }
+
+#save results
+ggsave("unpaid_daily_goog_pre_18_boxplot.png", dpi = 300, height = 9, width = 12, unit = 'in')
+
+
+```
+
+
+
+Saving the boxplot output!
+
+
+## Remove The Pre-2018 Outliers
+
+```{r unpaid_daily_goog_pre_18_short, warning=FALSE, include=FALSE}
+
+# remove anomalies---------
+outliers <-boxplot.stats(unpaid_daily_goog_pre_18_short$session_count_sum)$out
+
+dates_to_remove<-unpaid_daily_goog_pre_18_short[which(unpaid_daily_goog_pre_18_short$session_count_sum %in% outliers),]
+
+#remove the outliers
+unpaid_daily_goog_pre_18_short_no_outliers<- unpaid_daily_goog_pre_18_short[!unpaid_daily_goog_pre_18_short$date %in% dates_to_remove$date,]
+
+# double check no anomalies/outliers---------
+
+df <- as_tibble(unpaid_daily_goog_pre_18_short_no_outliers)
+
+
+df_anomalized <- df %>%
+  time_decompose(session_count_sum, merge = TRUE) %>%
+  anomalize(remainder) %>%
+  time_recompose()
+
+
+
+```
+
+Here I am removing the outliers, then verifying that the remaining data pre-2018 contains no anomalies.
+
+
+
+
+
+```{r pre_algo_goog_clean.png }
+
+#plot session counts before the anomalies
+pre_algo_goog_clean<-df_anomalized %>% plot_anomalies(ncol = 3, alpha_dots = 0.75,
+                                                      size_dots=5)
+pre_algo_goog_clean
+
+ggsave("pre_algo_goog_clean.png", dpi = 300, height = 9, width = 12, unit = 'in')
+
+
+```
+
+
+Looks good! There are no more anomalies left pre-2018. Saving this image.
+
+
+
+
+```{r df_unpaid_daily_goog_short_no_outliers_cleanup }
+
+
+# Look at all data again no anomalies---------
+
+#remove original days
+df_unpaid_daily_goog_short_no_outliers<- df_unpaid_daily_goog_short[!df_unpaid_daily_goog_short$date %in% dates_to_remove$date,]
+
+#still has outliers, run again
+df <- as_tibble(df_unpaid_daily_goog_short_no_outliers)
+
+
+df_anomalized <- df %>%
+  time_decompose(session_count_sum, merge = TRUE) %>%
+  anomalize(remainder) %>%
+  time_recompose()
+
+
+
+```
+
+This process might have to be repeated to take out additional anomalies.
+
+
+
+```{r df_unpaid_daily_goog_short_no_outliers }
+
+dates_to_remove<-df_anomalized[df_anomalized$anomaly=='Yes',]
+df_unpaid_daily_goog_short_no_outliers<- df_unpaid_daily_goog_short_no_outliers[!df_unpaid_daily_goog_short_no_outliers$date %in% dates_to_remove$date,]
+
+df <- as_tibble(df_unpaid_daily_goog_short_no_outliers)
+
+
+df_anomalized <- df %>%
+  time_decompose(session_count_sum, merge = TRUE) %>%
+  anomalize(remainder) %>%
+  time_recompose()
+
+
+```
+We see the weekly frequency represented here again.
+
+
+
+
+```{r pre_algo_non_goog_anomaly }
+
+#look into the results
+
+pre_algo_non_goog_anomaly<-df_anomalized %>% plot_anomalies(ncol = 3, alpha_dots = 0.75,
+                                                            size_dots=5)
+pre_algo_non_goog_anomaly
+
+
+```
+
+This anomaly accounts for Christmas day, where there would not be that many people online. This date should be excluded, and we can keep searching for the anomaly date.
+
+```{r algorithm_identification }
+
+dates_to_remove<-df_anomalized[df_anomalized$anomaly=='Yes',]
+df_unpaid_daily_goog_short_no_outliers<- df_unpaid_daily_goog_short_no_outliers[!df_unpaid_daily_goog_short_no_outliers$date %in% dates_to_remove$date,]
+df <- as_tibble(df_unpaid_daily_goog_short_no_outliers)
+
+df_anomalized <- df %>%
+  time_decompose(session_count_sum, merge = TRUE) %>%
+  anomalize(remainder) %>%
+  time_recompose()
+
+
+
+
+```
+
+Here I am removing Christmas day from the data.
+
+## Finding the Anomaly Date
+
+```{r algorithm_identification_plot}
+
+algorithm_identification<-df_anomalized %>% plot_anomalies(ncol = 3, alpha_dots = 0.75,
+                                                           size_dots=5)
+df_anomalized_identified<-df_anomalized
+algorithm_identification
+ggsave("algorithm_date.png", dpi = 300, height = 9, width = 12, unit = 'in')
+
+
+```
+Here! We can see this point as the possible date where the algorithm change could have occured. Let's see what day it is.
+
+```{r algorithm_date }
+
+####finding real anomaly
+algorithm_date<-df_anomalized[df_anomalized$anomaly=='Yes',]
+usable_dates<-df_anomalized[df_anomalized$anomaly=='No',]
+
+algorithm_date
+
+
+
+```
+
+Anomaly date was Feb 24 2018. We can see that after this date, the traffic searches decreased and never went back up. In the future, we can estimate how things would have progressed if there had been no Google algorithm change.
